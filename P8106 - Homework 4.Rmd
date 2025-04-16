@@ -18,6 +18,7 @@ library(gbm)
 library(pdp)
 library(pROC)
 library(rpart)
+library(rpart.plot)
 ```
 
 ## Upload and Split Data
@@ -27,12 +28,12 @@ library(rpart)
 # Upload data files
 
 auto = read_csv("auto.csv")
-college = read_csv("College.csv")
+college = read_csv("College.csv") |> select(-College)
 
 # Split data frames into training/testing sets
 
-data_split_auto = initial_split(auto, prop = 0.8)
-data_split_college = initial_split(college, prop = 0.7)
+data_split_auto = initial_split(auto, prop = 0.7)
+data_split_college = initial_split(college, prop = 0.8)
 
 # Extract training and testing data for both auto and college
 auto_train <- training(data_split_auto)
@@ -44,26 +45,248 @@ college_test <- testing(data_split_college)
 
 ## Problem 1
 
-### Part (a)
+### Part (a): Simple Regression Tree
 
 ```{r}
 
 set.seed(2025)
 
-college_tree = rpart(formula = Oustate ~ .,
+college_tree = rpart(formula = Outstate ~ .,
                      data = college_train,
-                     control = rpart.control(cp = 0.01))
+                     control = rpart.control(cp = 0))
+
+cpTable_college = printcp(college_tree)
+minErr_college = which.min(cpTable_college[, 4])
+college_tree_updated = rpart::prune(college_tree, cp = cpTable_college[minErr_college, 1])
+rpart.plot(college_tree_updated)
 
 ```
 
+This regression tree was built using cost complexity pruning. The first branch of the tree divides the data based on instructional expenditure per student. The regression tree sorts the data into a total of 19 categories.
 
-### Part (b)
+### Part (b): Random Forest
 
-### Part (c)
+#### Use CV to determine optimal parameters
+
+```{r}
+
+set.seed(2025)
+
+ctrl = trainControl(number = 10, method = "cv")
+
+rf_grid = expand.grid(mtry = 1:16,
+                      splitrule = "variance",
+                      min.node.size = 1:6)
+
+rf_college_fit = train(Outstate ~ .,
+                       data = college_train,
+                       method = "ranger",
+                       tuneGrid = rf_grid,
+                       trControl = ctrl)
+
+ggplot(rf_college_fit, highlight = TRUE)
+
+```
+
+From the above plot, we can see that the optimal values for `mtry` and `min.node.size` are 6 and 1, respectively.
+
+#### Build Final Model
+
+```{r}
+
+set.seed(2025)
+
+rf_college = ranger(Outstate ~ .,
+                    data = college_train,
+                    mtry = rf_college_fit$bestTune[[1]],
+                    splitrule = "variance",
+                    min.node.size = rf_college_fit$bestTune[[3]],
+                    importance = "permutation",
+                    scale.permutation.importance = TRUE)
+
+```
+
+#### Variable Importance Plot
+
+```{r}
+
+barplot(sort(ranger::importance(rf_college), decreasing = FALSE),
+        las = 2, horiz = TRUE, cex.names = 0.7,
+        col = colorRampPalette(colors = c("cyan","blue"))(19))
+
+```
+
+From the variable importance plot, we can see that instructional expenditure per student and room and board are the two most important variables when importance is determined through the permutation of out-of-bag (OOB) data. By the same method, estimated personal spending and estimated book costs were ranked as the two least important variables.
+
+#### Compute RMSE
+
+```{r}
+
+rf_college_pred = predict(rf_college, data = college_test)
+
+RMSE(rf_college_pred$predictions, college_test$Outstate)
+
+```
+
+Using the random forest method, the test RMSE is about 1958.9.
+
+### Part (c): Boosting
+
+#### Use CV to determine optimal parameters
+
+```{r}
+
+set.seed(2025)
+
+gbm_grid <- expand.grid(n.trees = c(100, 200, 500, 1000, 2000),
+                        interaction.depth = 1:4,
+                        shrinkage = c(0.005, 0.01, 0.05),
+                        n.minobsinnode = c(10))
+
+gbm_college_fit = train(Outstate ~ .,
+                        data = college_train,
+                        method = "gbm",
+                        tuneGrid = gbm_grid,
+                        trControl = ctrl, 
+                        verbose = FALSE)
+
+ggplot(gbm_college_fit, highlight = TRUE)
+
+```
+
+From the above plot, we can see that the optimal values for `n.trees`, `interaction.depth`, and `shrinkage` are 1000, 4, and 0.005, respectively.
+
+#### Build Final Model
+
+```{r}
+
+set.seed(2025)
+
+gbm_college = gbm(
+  Outstate ~ .,
+  data = college_train,
+  distribution = "gaussian",
+  n.trees = 1000,
+  shrinkage = 0.005,
+  interaction.depth = 4
+)
+
+```
+
+#### Variable Importance Plot
+
+```{r}
+
+summary(gbm_college_fit$finalModel, las = 2, cBars = 16, cex.names = 0.6)
+
+```
+
+The variable importance plot for the boosting model ranks the same two variables (instructional expenditure per student and room/board cost, in that order) as the two most important. While the random forest model ranked estimated personal spending as the least important predictor, the boosting model instead ranked number of new students enrolled as the least important predictor.
+
+Compared to the variable importance plot for the random forest model, instructional expenditure per student has a far greater share of influence when compared to the other predictors -- its relative influence (~50) is about four times the influence of the next-most influential predictor (room/board cost, at ~12), while for the random forest model, the relative influence of instructional expenditure per student had only about 1.2 times the relative influence of the next-most influential predictor.
+
+#### Compute RMSE
+
+```{r}
+
+gbm_college_pred = predict(gbm_college, data = college_test)
+RMSE(gbm_college_pred, college_test$Outstate)
+
+```
+
+The RMSE of the boosting model is about 5013.7, which is much larger than that of the random forest model even with the optimal parameters selected through CV.
 
 ## Problem 2
 
-### Part (a)
+### Part (a): Basic Classification Tree
 
-### Part (b)
+#### Minimum Error Method
 
+```{r}
+
+set.seed(2025)
+
+auto_tree = rpart(formula = mpg_cat ~ .,
+                     data = auto_train,
+                     control = rpart.control(cp = 0))
+
+cpTable_auto = printcp(auto_tree)
+minErr_auto = which.min(cpTable_auto[, 4])
+auto_tree_updated = rpart::prune(auto_tree, cp = cpTable_auto[minErr_auto, 1])
+rpart.plot(auto_tree_updated)
+
+```
+
+#### 1SE Method
+
+```{r}
+
+auto_tree_1se = rpart::prune(auto_tree, cp = cpTable_auto[2, 1])
+rpart.plot(auto_tree_1se)
+
+```
+
+In this case, the tree that is closest to 1SE from the minimum `xerror` (according to our CP table) is a tree with one split and a complexity parameter of about 0.015. The "1SE method" tree is much simpler, having only one branch, making it easier to interpret than the minimum error tree. In the case of the "1SE method" tree, mpg is classified as high if the displacement is less than 199 and low if it is greater than or equal to 199.
+
+### Part (b): Boosting
+
+#### Use CV to determine optimal parameters
+
+```{r}
+
+set.seed(2025)
+
+gbm_auto_fit = train(mpg_cat ~ .,
+                        data = auto_train,
+                        method = "gbm",
+                        tuneGrid = gbm_grid,
+                        trControl = ctrl, 
+                        verbose = FALSE)
+
+ggplot(gbm_auto_fit, highlight = TRUE)
+
+```
+
+From the above plot, we can see that the optimal values for `n.trees`, `interaction.depth`, and `shrinkage` are 500, 2, and 0.05, respectively.
+
+#### Build Final Model
+
+```{r}
+
+set.seed(2025)
+
+auto_train$mpg_cat = as.numeric(auto_train$mpg_cat == "high")
+
+gbm_auto = gbm(
+  mpg_cat ~ .,
+  data = auto_train,
+  distribution = "adaboost",
+  n.trees = 1000,
+  shrinkage = 0.005,
+  interaction.depth = 4
+)
+
+```
+
+#### Variable Importance Plot
+
+```{r}
+
+summary(gbm_auto_fit$finalModel, las = 2, cBars = 19, cex.names = 0.6)
+
+```
+
+From the variable importance plot, we can see that displacement is ranked as the most important predictor and has about twice the relative importance of the next most important predictor (number of cylinders). The least important predictor is the car's country of origin.
+
+#### Compute Classification Accuracy
+
+```{r}
+
+gbm_auto_pred_raw = predict(gbm_auto, newdata = auto_test, type = "response")
+gbm_auto_pred = ifelse(gbm_auto_pred_raw > 0.5, "high", "low")
+gbm_auto_pred_accuracy = mean(gbm_auto_pred == auto_test$mpg_cat)
+gbm_auto_pred_accuracy
+
+```
+
+The boosting model's classification accuracy is about 92.4\% -- the model correctly classified 109 of the 118 cars as having either high or low MPG. Not bad!
