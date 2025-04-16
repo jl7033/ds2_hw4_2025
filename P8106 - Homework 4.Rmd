@@ -1,0 +1,12 @@
+---
+title: "P8106 - Homework 4"
+author: "Joe LaRocca"
+date: "2025-04-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Upload Data
