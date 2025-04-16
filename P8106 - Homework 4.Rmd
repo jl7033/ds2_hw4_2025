@@ -7,6 +7,63 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ISLR)
+library(mlbench)
+library(caret)
+library(tidymodels)
+library(randomForest)
+library(ranger)
+library(gbm)
+library(pdp)
+library(pROC)
+library(rpart)
 ```
 
-## Upload Data
+## Upload and Split Data
+
+```{r}
+
+# Upload data files
+
+auto = read_csv("auto.csv")
+college = read_csv("College.csv")
+
+# Split data frames into training/testing sets
+
+data_split_auto = initial_split(auto, prop = 0.8)
+data_split_college = initial_split(college, prop = 0.7)
+
+# Extract training and testing data for both auto and college
+auto_train <- training(data_split_auto)
+auto_test <- testing(data_split_auto)
+college_train <- training(data_split_college)
+college_test <- testing(data_split_college)
+
+```
+
+## Problem 1
+
+### Part (a)
+
+```{r}
+
+set.seed(2025)
+
+college_tree = rpart(formula = Oustate ~ .,
+                     data = college_train,
+                     control = rpart.control(cp = 0.01))
+
+```
+
+
+### Part (b)
+
+### Part (c)
+
+## Problem 2
+
+### Part (a)
+
+### Part (b)
+
